@@ -1,0 +1,115 @@
+---
+title: "Social Network Analysis <br/> Home Assignment 3"
+author: 'Lev Mazaev'
+date: "due date - 03.06.2019 23:59"
+output:
+  pdf_document:
+    toc: yes
+---
+
+```{r, echo=FALSE, include=FALSE}
+library(igraph)
+library(ggplot2)
+```
+
+## Yahoo Music Network
+
+For this assignment, you have to load [the part of Yahoo Music Network](https://drive.google.com/file/d/0Bwd5a7NScgMtNElfOFdSbE1UYnM/view). Archive contains network in GML format and corresponding list of artists.
+
+```{r}
+ymnRaw <- read_graph(file = 'music2K.gml', format = 'gml')
+vLabels <- read.delim(file = 'artists.txt', header = FALSE, stringsAsFactors = FALSE)[, 1]
+ymnRaw <- set_vertex_attr(graph = ymnRaw, name = 'label', value = vLabels)
+```
+
+Edges in this network appear if enough number of users have given ratings to both music bands. Note, that edges are weighted with similarity of the ratings.
+
+### 1. Preprocessing
+
+This network needs to be preprocessed. Do the steps, described on seminar, to make it look properly. How many vertices and edges were deleted?
+
+```{r}
+ymn <- delete_vertices(ymnRaw, degree(ymnRaw) == 0)
+ymn <- simplify(ymn)
+vDiff <- vcount(ymnRaw) - vcount(ymn)
+eDiff <- ecount(ymnRaw) - ecount(ymn)
+```
+
+`r vDiff` vertices deleted, `r eDiff` edges deleted.
+
+Let's plot the graph itself.
+
+```{r, fig.height=9, fig.width=9}
+plot.igraph(ymn, layout = layout_with_lgl, vertex.label = NA,
+            vertex.size = 2, vertex.color = 'springgreen')
+```
+
+### 2. Clustering
+
+Define clusters for this networks using one of the algorithms described on lectures and seminars:
+
+```{r}
+commYMN <- cluster_louvain(graph = ymn)
+```
+
+Compute density of obtained clusters:
+
+```{r}
+clustDensity <- sapply(communities(commYMN), function(comm) {
+  subYMN <- induced_subgraph(graph = ymn, vids = comm)
+  return(edge_density(graph = subYMN))
+})
+```
+
+Compute the ratio of inner clusters connections to outer ones:
+
+```{r}
+clustRatio <- sapply(communities(commYMN), function(comm) {
+  subYMN <- induced_subgraph(graph = ymn, vids = comm)
+  innerConnections <- ecount(subYMN)
+  # induced_subgraph does not keep outer edges
+  outerConnections <- sum(degree(graph = ymn, v = comm)) - innerConnections * 2
+  return(innerConnections / outerConnections)
+})
+```
+
+Obtained stats for each cluster:
+
+```{r}
+dfYMN <- data.frame(`cluster number` = names(clustDensity),
+                    density = clustDensity,
+                    ratio = clustRatio,
+                    check.names = FALSE,
+                    stringsAsFactors = FALSE)
+knitr::kable(dfYMN[order(dfYMN$density, decreasing = TRUE), ], row.names = FALSE)
+```
+
+
+
+### 3. Visualization & interpretation
+
+Visulize five of the most dense clusters. Use names of artists as node labels on the graph.
+
+```{r, fig.width=9, fig.height=9}
+mostDenseClusters <- order(clustDensity, decreasing = TRUE)[1:5]
+theirVertices <- unlist(communities(commYMN)[mostDenseClusters])
+theseClustersGraph <- induced_subgraph(graph = ymn, vids = theirVertices)
+V(theseClustersGraph)$color <- rainbow(5)[components(theseClustersGraph)$membership]
+plot(theseClustersGraph,
+     vertex.size = 8,
+     vertex.label.color = 'black',
+     vertex.label.dist = 1,
+     vertex.label.cex = 0.8)
+```
+
+**(Extra task)** Try to interpret (using Wikipedia or other resources) obtained clusters.
+
+Genres of several chosen performers from each cluster are present below:
+
+- Green cluster: pop, freestyle, dance
+- Lightgreen cluster: gospel, soul, R&B
+- Blue cluster: jazz
+- Purple cluster: electronic rock, gothic rock, synthpop
+- Red: classical, opera, comedian - mix of genres
+
+As we know, edges in this network appear if enough number of users have given ratings to both music bands. So, these clusters may correspond to particular sets of people's preferences in music. And these sets do not intersect much with each other (high inner to outer connections ratio) possibly revealing the fact that most people do not change their music preferences often.

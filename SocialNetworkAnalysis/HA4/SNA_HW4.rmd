@@ -1,0 +1,176 @@
+---
+title: "Social Network Analysis <br/> Home Assignment 4"
+author: 'Lev Mazaev'
+date: "due date - 11.06.2019 23:59"
+output:
+  pdf_document:
+    toc: yes
+---
+
+# Network Epidemics
+
+```{r, echo=FALSE, include=FALSE}
+library(igraph)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+library(dplyr)
+```
+
+## SIR Model
+
+### Generation of random graphs and loading real network
+
+```{r}
+graphList <- list()
+graphList$`Erdos-Renyi` <- erdos.renyi.game(n = 1000, p.or.m = 0.01, type=c("gnp"))
+graphList$`Barabasi-Albert` <- barabasi.game(n = 1000, m = 10, directed=FALSE)
+graphList$`Watts-Strogatz` <- watts.strogatz.game(dim = 2, size = 50, nei = 3, p = 0.001)
+graphList$`Real Network` <- read_graph(file = 'Net.txt', directed = FALSE)
+``` 
+
+### Simulation plots
+
+```{r, fig.width=9, fig.height=9}
+sim <- lapply(graphList, sir, beta = 2, gamma = 4, no.sim = 100)
+par(mfrow = c(2, 2))
+plot(sim$`Erdos-Renyi`, main = 'Erdos-Renyi Graph',
+     color = 'gray', median_color = 'black', quantile_color = 'black')
+plot(sim$`Barabasi-Albert`, main = 'Barabasi-Albert Graph',
+     color = "palegoldenrod", median_color = "gold", quantile_color = "gold")
+plot(sim$`Watts-Strogatz`, main = 'Watts-Strogatz Graph', 
+     color = "pink", median_color = "red", quantile_color = "red")
+plot(sim$`Real Network`, main = 'Real Network')
+```
+
+On these plots we observe simulation lines for the number of infected nodes for each graph model. But it's an inconvenient representation to make some inferences about SIR model in case of different graphs. 
+
+### Plots of the graphs
+
+```{r eval=FALSE, fig.height=8, fig.width=8, include=FALSE}
+plot.igraph(x = graphList$`Erdos-Renyi`, layout = layout_with_lgl,
+            vertex.label = NA, vertex.size = 1, vertex.color = 'black',
+            edge.width = 0.1, main = 'Erdos-Renyi')
+plot.igraph(x = graphList$`Barabasi-Albert`, layout = layout_with_lgl,
+            vertex.label = NA, vertex.size = 1, vertex.color = 'gold',
+            edge.width = 0.1, main = 'Barabasi-Albert')
+plot.igraph(x = graphList$`Watts-Strogatz`, layout = layout_with_lgl,
+            vertex.label = NA, vertex.size = 1, vertex.color = 'red',
+            edge.width = 0.1, main = 'Watts-Strogatz')
+plot.igraph(x = graphList$`Real Network`,
+            vertex.label = NA, vertex.size = 1, vertex.color = 'blue',
+            edge.width = 0.1, main = 'Real Network')
+```
+
+### Functions
+
+```{r}
+naImpute <- function(x) {
+  # this function imputes NA values of the vector
+  # with its previous values
+  # this is to remove line breaks
+  for (i in 2:length(x)) {
+    if (is.na(x[i])) x[i] <- x[i-1]
+  }
+  return(x)
+}
+
+plotFunc <- function(gl, beta, gamma, niter) {
+  # this function plots 4 graphs: one for each graph
+  simG <- lapply(X = gl, FUN = sir, beta = beta, gamma = gamma, no.sim = niter)
+  binMed <- lapply(X = simG, FUN = time_bins, middle = TRUE)
+  medians <- lapply(X = simG, FUN = median, na.rm = TRUE)
+  dataFrames <- map2(binMed, medians, function(bin, numList) {
+    numList <- lapply(X = numList, FUN = naImpute)
+    df <- data.frame(Time = bin, numList)
+    return(df)
+  })
+  dataFrames <- bind_rows(dataFrames, .id = 'Graph')
+  dataFrames <- gather(data = dataFrames, key = 'Numbers', value = 'N(t)', 3:5)
+  plotTitle <- paste0('beta: ', beta, ', gamma: ', gamma)
+  plotObj <- ggplot(data = dataFrames, mapping = aes(x = Time, y = `N(t)`, color = Numbers)) +
+    geom_line(size = 1) +
+    facet_wrap(facets = ~ Graph, nrow = 2, ncol = 2,
+               scales = 'free') +
+    scale_colour_manual(values = c('NI' = 'red',
+                                   'NR' = 'darkgreen',
+                                   'NS' = 'blue'),
+                        labels = c('Number of infected',
+                                   'Number of recovered',
+                                   'Number of susceptible')) +
+    ggtitle(plotTitle)
+  return(list(values = dataFrames, plot = plotObj))
+}
+```
+
+### Plots
+
+$\beta$ is infection rate, $\gamma$ is recovery rate in SIR model.
+
+##### 1st case: $\beta=5$, $\gamma=15$
+
+```{r, fig.width=9, fig.height=9}
+sim1 <- plotFunc(gl = graphList, beta = 5, gamma = 15, niter = 2000)
+sim1$plot
+```
+
+All 3 random graph models (ER, BA and WS) show the same pattern: the number of infected has a substantial peak in the beginning of timeline (for approx. 1 unit of timeline) and then it gradually decreases to zero, so the infection is epidemic. The absolute values differ: the infection is the strongest in WS graph, where the number of susceptible nodes drops to almost zero in the end, and is much weaker in ER graph, where approximately $7/8$ of the nodes were infected. The BA graph is somewhere in the middle. Regarding real network there are some problems with modelling, only `r sum(sim1[['values']][1] == 'Real Network')/3` time points are calculated. It can be observed that the infection is gradually decreasing since the start and that a bit more than half of the nodes were affected.
+
+Also there must be some modelling artifacts causing these oscillations of number lines in the end of timeline.
+
+Below are minimum and maximum numbers of susceptible/infected/recovered nodes of all graphs.
+
+```{r}
+knitr::kable(sim1$values %>%
+               group_by(Graph, Numbers) %>% 
+               summarise(min = min(`N(t)`), max = max(`N(t)`)))
+```
+
+##### 2nd case: $\beta=10$, $\gamma=10$
+
+```{r, fig.width=9, fig.height=9}
+sim2 <- plotFunc(gl = graphList, beta = 10, gamma = 10, niter = 2000)
+sim2$plot
+```
+
+The infection has become epidemic in all 4 cases. Zero susceptible nodes left in WA and BA graphs, almost zero in ER graph and 18% in real network. Regarding the timeline the behavior is the same for all graphs - the infection peak is within the 1st timeline unit. 
+
+```{r}
+knitr::kable(sim2$values %>%
+               group_by(Graph, Numbers) %>% 
+               summarise(min = min(`N(t)`), max = max(`N(t)`)))
+```
+
+##### 3rd case: $\beta=15$, $\gamma=5$
+
+```{r, fig.width=9, fig.height=9}
+sim3 <- plotFunc(gl = graphList, beta = 15, gamma = 5, niter = 2000)
+sim3$plot
+```
+
+The infection is epidemic again in all 4 cases. Number of susceptible nodes left in random graphs is zero and 7% in real network. The timeline of simulation has become longer, the infection peaks are in the first 2 units. 
+
+```{r}
+knitr::kable(sim3$values %>%
+               group_by(Graph, Numbers) %>% 
+               summarise(min = min(`N(t)`), max = max(`N(t)`)))
+```
+
+Since we have not seen the infection not becoming epidemic except possibly real network in the 1st case, let's try one additional set of parameters.
+
+##### 4th case: $\beta=2$, $\gamma=20$
+
+```{r, fig.width=9, fig.height=9}
+sim4 <- plotFunc(gl = graphList, beta = 2, gamma = 20, niter = 2000)
+sim4$plot
+```
+
+The infection has become epidemic in BA and WS graphs with lots of nodes remaining unaffected. In ER and real network graph there is no peak of infection, it just slowly spreads through graph without becoming epidemic but not disappearing. The timeline of modelling is the shortest across all simulations. The WA modelling lines experience strong oscillations.
+
+```{r}
+knitr::kable(sim4$values %>%
+               group_by(Graph, Numbers) %>% 
+               summarise(min = min(`N(t)`), max = max(`N(t)`)))
+```
+
+In conclusion, it can be said that the modelling time (length of timeline) and quality (number of points) strongly depends on input parameters sometimes complicating inferences. These particular Barabasi-Albert and Watts-Strogatz graphs are the most vulnerable to the infection, the Erdos-Renyi one is less, and the real network is the least vulnerable one. Two latter stay below epidemic threshold in the 4th case where $\beta$ is 10 times less than $\gamma$.
