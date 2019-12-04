@@ -1,0 +1,102 @@
+---
+title: "exercise81"
+author: "Lev Mazaev"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Exercise 8.1 (Applied Predictive Modeling, p. 218)
+
+### Loading the packages
+```{r, echo=TRUE, message=FALSE}
+library(mlbench)
+library(caret)
+library(doMC)
+registerDoMC(8)
+library(randomForest)
+library(partykit)
+library(Cubist)
+```
+
+### Creating the data
+```{r}
+set.seed(200)
+simulated <- mlbench.friedman1(200, sd = 1)
+simulated <- cbind(simulated$x, simulated$y)
+simulated <- as.data.frame(simulated)
+colnames(simulated)[ncol(simulated)] <- 'y'
+```
+
+### A: Fit a random forest model to all of the predictors, then estimate the variable importance scores.
+```{r}
+rf1 <- randomForest(y ~ ., data = simulated, importance = TRUE, ntree = 1000)
+rfImp1 <- varImp(rf1, scale = FALSE)
+rfImp1
+```
+#### The random forest model did not significantly use the uninformative predictors (V6-V10).
+
+### B: Now add an additional predictor that is highly correlated with one of the informative predictors.
+```{r}
+simulated$duplicate1 <- simulated$V1 + rnorm(200) * .1
+cor(simulated$duplicate1, simulated$V1)
+```
+#### Now fitting another random forest model:
+```{r}
+rf2 <- randomForest(y ~ ., data = simulated, importance = TRUE, ntree = 1000)
+rfImp2 <- varImp(rf2, scale = FALSE)
+rfImp2
+```
+#### The importance score for V1 has changed. Now duplicate1 also has a significant score.
+#### Adding another highly correlated predictor:
+```{r}
+simulated$duplicate2 <- simulated$V1 + rnorm(200, 5) * .1
+cor(simulated$duplicate2, simulated$V1)
+rf3 <- randomForest(y ~ ., data = simulated, importance = TRUE, ntree = 1000)
+rfImp3 <- varImp(rf3, scale = FALSE)
+rfImp3
+```
+#### The importance score for V1 decreases further while both duplicate1 and duplicate2 predictors have significant importance score.
+
+### C: Use the cforest function in the party package to fit a random forest model using conditional inference trees.
+```{r}
+modelC <- cforest(y ~ ., data = simulated[1:11], ntree = 1000)
+CImpc <- varimp(object = modelC, conditional = TRUE)
+CImpuc <- varimp(object = modelC, conditional = FALSE)
+as.data.frame(CImpc)
+as.data.frame(CImpuc)
+```
+#### The importance score of cforest model in case of absence of additional predictors (duplicate1 and duplicate2) shows other pattern: V3 also has low importance (on one level with uninformative, which wasn't the case previously). Also conditional varimp function estimates uninformative predictors' importance (V6-V10) higher than unconditional, but still much lower than informative ones. Now let's try with duplicates:
+```{r}
+modelCd <- cforest(y ~ ., data = simulated, ntree = 1000)
+CdImpc <- varimp(object = modelCd, conditional = TRUE)
+CdImpuc <- varimp(object = modelCd, conditional = FALSE)
+as.data.frame(CdImpc)
+as.data.frame(CdImpuc)
+```
+#### V3 has very low importance in both cases, uninformative predictors also do. But conditional varimp function correctly recognizes (if it could be said so) highly correlated predictors (V1, duplicate1 and duplicate2) and lowers their importance score, while unconditional varimp does not. 
+
+### D: Repeat the process with different tree model, such as boosted trees and cubist.
+```{r}
+library(gbm)
+gbm1 <- gbm(y ~ ., data = simulated[1:11], n.trees = 1000, distribution = 'gaussian')
+summary(gbm1)
+gbm2 <- gbm(y ~ ., data = simulated, n.trees = 1000, distribution = 'gaussian')
+summary(gbm2)
+```
+#### In case of boosted trees, uninformative predictors are insignificant. Duplicates are taken into account, but on lower level than V1.
+```{r}
+cubist1 <- train(y ~ ., data = simulated[1:11], method = 'cubist')
+varImp(cubist1)
+cubist2 <- train(y ~ ., data = simulated, method = 'cubist')
+varImp(cubist2)
+```
+#### The Cubist neglects uninformative predictors and takes into consideration duplicates, but with smaller score than V1. 
+
+## Summary.
+### All models take into account informative predictors (differently), but almost neglect uninformative. In case of added higly-correlated predictors each model reacts differently, but some pattern may be traced: 1. Duplicates drain the importance from the V1. 2. V1 still has higher importance score than duplicates in all models. 3. Duplicate1 is usually more important than duplicate2.

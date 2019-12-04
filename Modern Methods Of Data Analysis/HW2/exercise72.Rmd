@@ -1,0 +1,124 @@
+---
+title: "exercise72"
+author: "Lev Mazaev"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Exercise 7.2 (Applied Predictive Modeling, p. 169)
+
+### Loading the packages
+```{r, echo=TRUE, message=FALSE}
+library(mlbench)
+library(caret)
+library(doMC)
+library(earth)
+registerDoMC(8)
+```
+
+### Creating the data
+```{r}
+set.seed(200)
+trainingData <- mlbench.friedman1(200, sd = 1)
+trainingData$x <- data.frame(trainingData$x)
+featurePlot(trainingData$x, trainingData$y)
+testData <- mlbench.friedman1(5000, sd = 1)
+testData$x <- data.frame(testData$x)
+```
+
+### Correlation check
+```{r}
+corrplot::corrplot(cor(trainingData$x))
+findCorrelation(cor(trainingData$x), cutoff = 0.75)
+```
+#### There are no highly-correlated predictors
+
+### Neural Network
+```{r}
+nnetGrid <- expand.grid(.decay = c(0, 0.01, .1), .size = 1:10, .bag = FALSE)
+nnetModel <- train(x = trainingData$x, y = trainingData$y,
+                   method = "avNNet", tuneGrid = nnetGrid, 
+                   trControl = trainControl(method = "cv"),
+                   preProcess = c("center", "scale"),
+                   linout = TRUE, trace = TRUE,
+                   MaxNWts = 10 * (ncol(trainingData$x) + 1) + 10 + 1,
+                   maxit = 500)
+nnetModel
+plot(nnetModel)
+```
+
+#### Performance evaluation
+```{r}
+nnetPred <- predict(nnetModel, newdata = testData$x)
+modelstats <- postResample(pred = nnetPred, obs = testData$y)
+postResample(pred = nnetPred, obs = testData$y)
+```
+
+### K Nearest Neighbors
+```{r}
+knnModel <- train(x = trainingData$x, y = trainingData$y,
+                  method = "knn", preProcess = c("center", "scale"),
+                  tuneLength = 10)
+knnModel
+plot(knnModel)
+```
+
+#### Performance evaluation
+```{r}
+knnPred <- predict(knnModel, newdata = testData$x)
+modelstats <- rbind(modelstats, postResample(pred = knnPred, obs = testData$y))
+postResample(pred = knnPred, obs = testData$y)
+```
+
+### MARS
+```{r}
+marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
+marsModel <- train(x = trainingData$x, y = trainingData$y, method = "earth", 
+                   tuneGrid = marsGrid, trControl = trainControl(method = "cv"))
+marsModel
+plot(marsModel)
+```
+
+#### Which predictors did MARS select as the informative?
+```{r}
+varImp(marsModel)
+```
+#### Only X1-X5
+
+#### Performance evaluation
+```{r}
+marsPred <- predict(marsModel, newdata = testData$x)
+modelstats <- rbind(modelstats, postResample(pred = marsPred, obs = testData$y))
+postResample(pred = marsPred, obs = testData$y)
+```
+
+### SVM Radial
+```{r}
+svmRModel <- train(x = trainingData$x, y = trainingData$y,
+                  method = "svmRadial", preProcess = c("center", "scale"),
+                  tuneLength = 14, trControl = trainControl(method = "cv"))
+svmRModel
+plot(svmRModel)
+svmRModel$finalModel
+```
+
+#### Performance evaluation
+```{r}
+svmRPred <- predict(svmRModel, newdata = testData$x)
+modelstats <- rbind(modelstats, postResample(pred = svmRPred, obs = testData$y))
+postResample(pred = svmRPred, obs = testData$y)
+```
+
+## Which model performs the best?
+```{r}
+rownames(modelstats) <- c('NNET', 'KNN', 'MARS', 'SVM')
+modelstats
+```
+
+#### MARS model gives the best performance. Also it selects only informative predictors (X1-X5)

@@ -1,0 +1,279 @@
+---
+title: "Regression"
+author: "Lev Mazaev"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Exercise 1 (Applied Predictive Modeling, p. 137)
+Answers to the questions are in the end of the document.
+
+### Loading packages and data
+```{r, echo=TRUE, message=FALSE}
+library(caret)
+library(corrplot)
+library(doMC)
+registerDoMC(8)
+data(tecator)
+```
+
+### Checking the data
+
+```{r}
+splom(~endpoints)
+any(is.na(absorp))
+any(is.na(endpoints))
+colnames(absorp) <- paste0("V", 1:100)
+head(absorp[, 1:6])
+head(endpoints)
+```
+
+### Plotting 10 random spectra
+
+```{r}
+p10randspectra <- function() {
+set.seed(1)
+inSubset <- sample(1:dim(endpoints)[1], 10)
+
+absorpSubset <- absorp[inSubset,]
+endpointSubset <- endpoints[inSubset, 3]
+
+newOrder <- order(absorpSubset[,1])
+absorpSubset <- absorpSubset[newOrder,]
+endpointSubset <- endpointSubset[newOrder]
+
+plotColors <- rainbow(10)
+
+plot(absorpSubset[1,],
+     type = "n",
+     ylim = range(absorpSubset),
+     xlim = c(0, 105),
+     xlab = "Wavelength Index",
+     ylab = "Absorption")
+
+for(i in 1:10)
+{
+  points(absorpSubset[i,], type = "l", col = plotColors[i], lwd = 2)
+  text(105, absorpSubset[i,100], endpointSubset[i], col = plotColors[i])
+}
+title("Predictor Profiles for 10 Random Samples")
+}
+p10randspectra()
+```
+
+### Correlation matrix
+**All predictors are very highly correlated**
+```{r}
+corrplot(corr = cor(absorp), order = "hclust")
+```
+
+### Principal Component Analysis
+```{r}
+pcaObject <- prcomp(absorp, center = TRUE, scale. = TRUE)
+summary(pcaObject)
+
+plot(1:100, 100*summary(pcaObject)$importance[2, ], type = "b",
+     pch = 19, xlab = "# of component", ylab = "percent of variance")
+rm(pcaObject)
+```
+
+#### **The effective dimension of the data is 1 because PC1 catches 98.6% of variance**
+```{r}
+PCAFit <- preProcess(absorp, method = c("pca"))
+PCAFit
+rm(PCAFit)
+```
+#### **PCA from preProcess chooses 2 components**
+
+### Pre-processing and splitting the data
+```{r}
+trainrows <- createDataPartition(1:215, p = 0.6, list = TRUE)[[1]]
+transFit <- preProcess(absorp, method = c("BoxCox", "center", "scale"))
+transAbsorp <- as.data.frame(predict(transFit, absorp))
+trainX <- transAbsorp[trainrows, ]
+testX <- transAbsorp[-trainrows, ]
+transEndpoints <- as.data.frame(endpoints)
+trainY <- transEndpoints[trainrows, 2] # col #2 because only fat will be predicted
+testY <- transEndpoints[-trainrows, 2]
+trainingData <- cbind(trainX, trainY)
+colnames(trainingData)[101] <- "FatP"
+```
+
+### Visualization
+```{r}
+ggplot(trainingData, aes(x = V1, y = FatP)) +
+  geom_point()
+```
+
+### Function to evaluate models (by defaultSummary)
+```{r}
+modeval <- function(model, X = testX, Y = testY) {
+  pred <- predict(model, X)
+  values <- data.frame(obs = Y, pred = pred)
+  return(defaultSummary(values))
+}
+```
+
+### Ordinary Linear Regression, lm function
+```{r}
+lmbasic <- lm(FatP ~ ., data = trainingData)
+summary(lmbasic)
+modeval(lmbasic)
+modstats <- t(as.data.frame(modeval(lmbasic)))
+rownames(modstats)[1] <- "LM basic R"
+plot(testY, predict(lmbasic, testX), pch = 19, xlab = "Observed", ylab = "Predicted")
+```
+
+### Ordinary Linear Regression, lm from caret
+```{r}
+ctrl <- trainControl(method = "cv", number = 10)
+lmFit <- train(x = trainX, y = trainY, method = "lm", trControl = ctrl)
+lmFit
+modeval(lmFit)
+modstats <- rbind(modstats, modeval(lmFit))
+rownames(modstats)[2] <- "LM caret"
+plot(testY, predict(lmFit, testX), pch = 19, xlab = "Observed", ylab = "Predicted")
+```
+
+### Ordinary Linear Regression with filtering of highly correlated values
+```{r}
+tooHigh <- findCorrelation(cor(trainX), cutoff = 0.99)
+length(tooHigh)
+trainXfiltered <- trainX[, -tooHigh]
+testXfiltered <- testX[, -tooHigh]
+lmFiltered <- train(x = trainXfiltered, y = trainY,
+                    method = "lm", trControl = ctrl)
+lmFiltered
+modeval(lmFiltered, X = testXfiltered)
+modstats <- rbind(modstats, modeval(lmFiltered, X = testXfiltered))
+rownames(modstats)[3] <- "LM filtered"
+plot(testY, predict(lmFiltered, testXfiltered), pch = 19, xlab = "Observed", ylab = "Predicted")
+```
+
+### Robust Linear Regression, rlm from MASS
+```{r, error=TRUE}
+library(MASS)
+rlmFit <- rlm(FatP ~ ., data = trainingData)
+summary(rlmFit)
+modeval(rlmFit)
+modstats <- rbind(modstats, modeval(rlmFit))
+rownames(modstats)[4] <- "RLM MASS"
+plot(testY, predict(rlmFit, testX), pch = 19, xlab = "Observed", ylab = "Predicted")
+```
+
+### Robust Linear Regression with PCA
+```{r}
+rlmPCA <- train(x = trainX, y = trainY, method = "rlm", preProcess = "pca",
+                trControl = ctrl)
+summary(rlmPCA)
+modeval(rlmPCA)
+modstats <- rbind(modstats, modeval(rlmPCA))
+rownames(modstats)[5] <- "RLM PCA"
+plot(testY, predict(rlmPCA, testX), pch = 19, xlab = "Observed", ylab = "Predicted")
+```
+
+### Partial Least Squares Regression
+```{r}
+indx <- createFolds(trainY, returnTrain = TRUE)
+ctrl <- trainControl(method = "cv", index = indx)
+plsTune <- train(x = trainX, y = trainY, method = "pls", 
+                 tuneGrid = expand.grid(ncomp = 1:50),
+                 trControl = ctrl)
+```
+
+#### **Tuning parameters**
+```{r}
+plsTune
+plot(plsTune)
+```
+
+```{r}
+modeval(plsTune)
+modstats <- rbind(modstats, modeval(plsTune))
+rownames(modstats)[6] <- "PLSR"
+plot(testY, predict(plsTune, testX), pch = 19, xlab = "Observed", ylab = "Predicted")
+```
+
+### Principal Component Regression
+```{r}
+pcrTune <- train(x = trainX, y = trainY, method = "pcr", 
+                 tuneGrid = expand.grid(ncomp = 1:50),
+                 trControl = ctrl)
+```
+
+#### **Tuning parameters**
+```{r}
+pcrTune
+plot(pcrTune)
+```
+
+```{r}
+modeval(pcrTune)
+modstats <- rbind(modstats, modeval(pcrTune))
+rownames(modstats)[7] <- "PCR"
+plot(testY, predict(pcrTune, testX), pch = 19, xlab = "Observed", ylab = "Predicted")
+```
+
+### Ridge Regression
+```{r}
+ridgeGrid <- data.frame(.lambda = seq(0, .1, length = 15))
+ridgeRegFit <- train(x = trainX, y = trainY, method = "ridge", tuneGrid = ridgeGrid,
+                     trControl = ctrl)
+```
+
+#### **Tuning parameters**
+```{r}
+ridgeRegFit
+plot(ridgeRegFit)
+```
+
+```{r}
+modeval(ridgeRegFit)
+modstats <- rbind(modstats, modeval(ridgeRegFit))
+rownames(modstats)[8] <- "Ridge"
+plot(testY, predict(ridgeRegFit, testX), pch = 19, xlab = "Observed", ylab = "Predicted")
+```
+
+
+
+### LASSO Regression
+```{r}
+enetGrid <- expand.grid(.lambda = c(0, 0.01, .1),
+                        .fraction = seq(0.5, 1, length = 20))
+enetTune <- train(x = trainX, y = trainY, method = "enet", tuneGrid = enetGrid,
+                  trControl = ctrl)
+```
+
+#### **Tuning parameters**
+```{r}
+enetTune
+plot(enetTune)
+```
+
+```{r}
+modeval(enetTune)
+modstats <- rbind(modstats, modeval(enetTune))
+rownames(modstats)[9] <- "LASSO"
+plot(testY, predict(enetTune, testX), pch = 19, xlab = "Observed", ylab = "Predicted")
+```
+
+### Comparison of models
+
+```{r}
+modstats
+```
+
+### Answers
+b. The effective dimension of the data according to the PCA test is 1, because PC1 catches 98.6% of variance.
+
+c. Evaluations and plots for tuning parameters of some models are aforementioned.
+
+d. Principal Component Regression has the best predictive ability: the lowest $RMSE$ and the highest $R^2$. Some models, such as RLM with PCA and LM with filtering of highly correlated predictors, are significantly worse than others. Possibly these models loose some valuable information contained in predictors that were removed due to high correlation or during PCA.
+
+e. I would use PCR or PLSR for predicting the fat content of a sample because they show the highest and very similar performance on the test data. LASSO may also be considered, all other models models are outperformed by these ones.

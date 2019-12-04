@@ -1,0 +1,13 @@
+d1 = rpois(200,0.5)
+d2 = rpois(200,3)
+den1 = density(d1)
+den2 = density(d2)
+par(mfrow=c(1,2))
+plot(den1)
+lines(den2,col='red')
+d3 = cbind(d1,d2)
+plot(d3[,1],d3[,2])
+abline(lm(d3[,2] ~ d3[,1]),col='red')
+cor(d3[,1],d3[,2],method='p')
+cor.test(d3[,1],d3[,2],m='sp')$p.value
+write.table(d3,file='test.tab',sep='\t')
